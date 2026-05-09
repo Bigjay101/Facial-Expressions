@@ -1,0 +1,217 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\lstset{
+    backgroundcolor=\color{gray!10},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!40}
+}
+
+\title{\textbf{Facial Expression Recognition} \\ \large Data Preprocessing \& Exploratory Data Analysis}
+\author{}
+\date{\today}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+
+This report documents the data preprocessing and exploratory data analysis (EDA) pipeline developed for a facial expression recognition task. The goal of the project is to train a convolutional neural network (CNN) to classify images of faces into one of nine emotional expression categories. The pipeline was implemented using Python and PyTorch, with data sourced from the \textit{8 Facial Expressions for YOLO} dataset available on Kaggle.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Dataset}
+
+\subsection{Source}
+
+The dataset was obtained from Kaggle using the \texttt{kagglehub} library:
+
+\begin{lstlisting}[language=Python]
+import kagglehub
+path = kagglehub.dataset_download("aklimarimi/8-facial-expressions-for-yolo")
+\end{lstlisting}
+
+The dataset contains facial images annotated in YOLO format across nine expression classes: \textit{angry, contempt, disgust, fear, happy, natural, sad, sleepy,} and \textit{surprised}.
+
+\subsection{Directory Structure}
+
+The dataset follows a standard YOLO directory structure:
+
+\begin{lstlisting}
+data/
+  train/
+    images/
+    labels/
+  valid/
+    images/
+    labels/
+  test/
+    images/
+    labels/
+  data.yaml
+\end{lstlisting}
+
+Each label file contains one annotation per line in the format:
+
+\begin{lstlisting}
+class_id  x_center  y_center  width  height
+\end{lstlisting}
+
+where all bounding box values are normalised to the range $[0, 1]$ relative to image dimensions.
+
+\subsection{Dataset Split}
+
+The dataset was pre-split into training, validation, and test sets as summarised in Table~\ref{tab:splits}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Split} & \textbf{Images} \\
+\midrule
+Train & 64,864 \\
+Validation & 1,720 \\
+Test & 1,700 \\
+\midrule
+\textbf{Total} & \textbf{68,284} \\
+\bottomrule
+\end{tabular}
+\caption{Dataset split summary.}
+\label{tab:splits}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Exploratory Data Analysis}
+
+\subsection{Sanity Checks}
+
+Prior to any preprocessing, a series of sanity checks were conducted on the dataset:
+
+\begin{itemize}
+    \item \textbf{Corrupted images:} All images were opened and verified using the \texttt{Pillow} library. No corrupted files were found across any split.
+    \item \textbf{Label-image correspondence:} Every image file was confirmed to have a corresponding label file and vice versa, with no orphaned files detected.
+    \item \textbf{Image modes:} A sample of 500 training images was inspected for colour mode. The majority were RGB; however, approximately 6.5\% were found to be grayscale (\texttt{L} mode), requiring conversion during loading.
+    \item \textbf{Image sizes:} Images varied considerably in resolution, ranging from $640 \times 480$ to $1920 \times 1080$ pixels, necessitating a resizing step in the preprocessing pipeline.
+\end{itemize}
+
+\subsection{Class Distribution}
+
+The class distribution across all splits is visualised in Figure~\ref{fig:eda}. A pronounced class imbalance was identified in the training set, summarised in Table~\ref{tab:class_dist}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Class} & \textbf{Train} & \textbf{Validation} & \textbf{Test} \\
+\midrule
+Angry      & 11,195 & 258 & 297 \\
+Contempt   & 2,543  & 82  & 68  \\
+Disgust    & 4,296  & 108 & 98  \\
+Fear       & 5,358  & 107 & 144 \\
+Happy      & 13,831 & 387 & 407 \\
+Natural    & 5,663  & 172 & 136 \\
+Sad        & 11,969 & 312 & 298 \\
+Sleepy     & 1,051  & 38  & 33  \\
+Surprised  & 8,960  & 256 & 219 \\
+\bottomrule
+\end{tabular}
+\caption{Class distribution across dataset splits.}
+\label{tab:class_dist}
+\end{table}
+
+The most prevalent class (\textit{happy}, 13,831 samples) contains approximately 13 times more samples than the least prevalent class (\textit{sleepy}, 1,051 samples). This imbalance poses a risk of the model becoming biased toward dominant classes during training.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{eda_report.png}
+    \caption{EDA summary: class distribution per split, image size distribution, colour mode breakdown, and sample images per class.}
+    \label{fig:eda}
+\end{figure}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Preprocessing Pipeline}
+
+\subsection{Image Loading \& Transforms}
+
+All preprocessing is applied at load time via PyTorch transforms, avoiding the need to resave modified images to disk. The following transforms are applied:
+
+\begin{itemize}
+    \item \textbf{RGB conversion:} Grayscale images are converted to RGB via \texttt{.convert("RGB")} in the \texttt{Dataset} class.
+    \item \textbf{Resize \& CenterCrop:} Images are resized such that the shortest edge is 256 pixels, then centre-cropped to $224 \times 224$. This preserves aspect ratio and avoids facial distortion.
+    \item \textbf{Augmentation (train only):} Random horizontal flips, rotations of up to 10°, and colour jitter are applied to the training set to improve generalisation.
+    \item \textbf{Normalisation:} Pixel values are normalised using ImageNet mean and standard deviation values ($\mu = [0.485, 0.456, 0.406]$, $\sigma = [0.229, 0.224, 0.225]$), consistent with pretrained model expectations.
+\end{itemize}
+
+\subsection{Class Imbalance Handling}
+
+Two complementary strategies were employed to address the class imbalance identified during EDA:
+
+\subsubsection{Weighted Random Sampling}
+
+A \texttt{WeightedRandomSampler} was configured for the training \texttt{DataLoader}. Each training sample is assigned a weight inversely proportional to its class frequency:
+
+\begin{equation}
+    w_c = \frac{N}{n_c}
+\end{equation}
+
+where $N$ is the total number of training samples and $n_c$ is the number of samples in class $c$. This causes the sampler to draw minority class samples more frequently during training, effectively balancing the class distribution across batches.
+
+\subsubsection{Weighted Loss Function}
+
+The same inverse frequency weights are passed to \texttt{nn.CrossEntropyLoss} via the \texttt{weight} parameter:
+
+\begin{lstlisting}[language=Python]
+criterion = nn.CrossEntropyLoss(weight=class_weights)
+\end{lstlisting}
+
+This penalises misclassification of minority classes more heavily during backpropagation, reinforcing the effect of the sampler.
+
+\subsection{Custom Dataset Class}
+
+A custom \texttt{FacialExpressionDataset} class was implemented to interface with the YOLO folder structure. For each sample, it locates the image file, reads the class ID from the corresponding label file, applies the specified transforms, and returns an image tensor and class label.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+
+Table~\ref{tab:summary} summarises the key findings from EDA and the corresponding preprocessing decisions made.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{5cm}p{8cm}}
+\toprule
+\textbf{Finding} & \textbf{Action Taken} \\
+\midrule
+Varying image sizes & Resize + CenterCrop to $224 \times 224$ at load time \\
+Grayscale images present & Convert to RGB in Dataset class \\
+Severe class imbalance (13$\times$) & WeightedRandomSampler + weighted CrossEntropyLoss \\
+No corrupted images & No action required \\
+No missing label/image pairs & No action required \\
+\bottomrule
+\end{tabular}
+\caption{Summary of EDA findings and preprocessing decisions.}
+\label{tab:summary}
+\end{table}
+
+\end{document}
